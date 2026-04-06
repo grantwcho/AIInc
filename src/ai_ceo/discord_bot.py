@@ -123,6 +123,33 @@ def _format_cycle_summary(result: Any, non_ceo_reports: List[Dict[str, Any]]) ->
     return "\n".join(lines).strip()
 
 
+def _format_admin_dm(result: Any, non_ceo_reports: List[Dict[str, Any]]) -> str:
+    created_agents = [
+        action.get("name") or action.get("agent_id")
+        for action in [item.to_dict() for item in result.applied_agent_actions]
+        if action.get("action") == "create"
+    ]
+    lines = [
+        "Ryan CEO update",
+        result.reflection_summary.strip() or "I ran a company cycle.",
+        "",
+        f"Self-prompt: {result.self_prompt.strip() or 'n/a'}",
+    ]
+    if created_agents:
+        lines.append(f"Created agents: {', '.join(created_agents[:6])}")
+    if result.recorded_decisions:
+        lines.append("Top decisions:")
+        for item in result.recorded_decisions[:3]:
+            lines.append(f"- {item.title}: {item.summary}")
+    if non_ceo_reports:
+        lines.append("Active agent reports:")
+        for report in non_ceo_reports[:5]:
+            lines.append(
+                f"- {report.get('agent_name', report.get('agent_id', 'Agent'))}: {report.get('summary', '')}"
+            )
+    return "\n".join(lines).strip()
+
+
 def _autonomous_trigger() -> str:
     return os.getenv(
         "AI_CEO_AUTONOMOUS_TRIGGER",
@@ -284,6 +311,40 @@ async def _publish_company_loop(
             updates_channel = reply_channel or await _ensure_updates_channel(guild)
             await updates_channel.send(_format_cycle_summary(result, non_ceo_reports))
 
+    await _send_admin_dm(client, _format_admin_dm(result, non_ceo_reports))
+
+
+async def _resolve_admin_user(client: Any) -> Optional[Any]:
+    raw = os.getenv("AI_CEO_DISCORD_ADMIN_USER_ID", "").strip()
+    if not raw:
+        return None
+    try:
+        user_id = int(raw)
+    except ValueError:
+        return None
+
+    cached = client.get_user(user_id)
+    if cached is not None:
+        return cached
+    try:
+        return await client.fetch_user(user_id)
+    except Exception as exc:
+        print(f"Failed to fetch Discord admin user {user_id}: {exc}")
+        return None
+
+
+async def _send_admin_dm(client: Any, content: str) -> None:
+    if not content.strip():
+        return
+    admin_user = await _resolve_admin_user(client)
+    if admin_user is None:
+        return
+    try:
+        channel = admin_user.dm_channel or await admin_user.create_dm()
+        await channel.send(content[:1900])
+    except Exception as exc:
+        print(f"Failed to DM Discord admin: {exc}")
+
 
 async def _autonomous_ceo_loop(client: Any, engine: CEOEngine, store: MemoryStore, agent_id: str) -> None:
     interval_seconds = max(30, int(os.getenv("AI_CEO_AUTONOMOUS_INTERVAL_SECONDS", "300")))
@@ -294,17 +355,21 @@ async def _autonomous_ceo_loop(client: Any, engine: CEOEngine, store: MemoryStor
         await asyncio.sleep(interval_seconds)
 
     while not client.is_closed():
-        async with cycle_lock:
-            loop_result = await _run_company_loop(
-                engine=engine,
-                trigger=_autonomous_trigger(),
-            )
-            await _publish_company_loop(
-                client=client,
-                store=store,
-                agent_id=agent_id,
-                loop_result=loop_result,
-            )
+        try:
+            async with cycle_lock:
+                loop_result = await _run_company_loop(
+                    engine=engine,
+                    trigger=_autonomous_trigger(),
+                )
+                await _publish_company_loop(
+                    client=client,
+                    store=store,
+                    agent_id=agent_id,
+                    loop_result=loop_result,
+                )
+        except Exception as exc:
+            print(f"Autonomous CEO loop failed: {exc}")
+            await _send_admin_dm(client, f"Ryan CEO loop hit an error:\n{exc}")
         await asyncio.sleep(interval_seconds)
 
 

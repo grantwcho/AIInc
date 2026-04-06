@@ -10,6 +10,7 @@ from ai_ceo.discord_bot import (
     _autonomous_trigger,
     _clean_discord_content,
     _env_flag,
+    _format_admin_dm,
     _format_agent_report_for_channel,
     _format_cycle_summary,
     _load_persona_prompt,
@@ -115,6 +116,35 @@ class DiscordBotTests(unittest.TestCase):
                 os.environ.pop("AI_CEO_AUTONOMOUS_TRIGGER", None)
             else:
                 os.environ["AI_CEO_AUTONOMOUS_TRIGGER"] = original
+
+    def test_format_admin_dm_includes_decisions_and_reports(self) -> None:
+        result = CycleResult(
+            cycle_id="cycle_1",
+            objective=ObjectiveState(
+                company_name="Go Unicorn",
+                ultimate_objective="Win.",
+                strategy="Move fast.",
+            ),
+            reflection_summary="I pushed the company toward PMF.",
+            self_prompt="What unlocks revenue fastest?",
+            applied_agent_actions=[
+                AgentAction(action="create", agent_id="head_of_product", name="Head of Product")
+            ],
+            recorded_decisions=[
+                type(
+                    "Decision",
+                    (),
+                    {"title": "Ship MVP fast", "summary": "Use the narrowest wedge first"},
+                )()
+            ],
+        )
+        rendered = _format_admin_dm(
+            result,
+            [{"agent_name": "Head of Product", "summary": "I scoped the MVP."}],
+        )
+        self.assertIn("Ryan CEO update", rendered)
+        self.assertIn("Created agents: Head of Product", rendered)
+        self.assertIn("- Ship MVP fast: Use the narrowest wedge first", rendered)
 
 
 if __name__ == "__main__":
