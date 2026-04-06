@@ -294,6 +294,7 @@ class CEOEngine:
 
             context = {
                 "trigger": trigger,
+                "surface": agent.metadata.get("surface", ""),
                 "objective": objective.to_dict(),
                 "assigned_work_items": claimed_work,
                 "inbox_messages": claimed_messages,
@@ -360,6 +361,7 @@ class CEOEngine:
                     "agent_id": agent.agent_id,
                     "agent_name": agent.name,
                     "summary": report.summary,
+                    "direct_response": report.direct_response,
                     "deliverables": list(report.deliverables),
                     "needs": list(report.needs),
                     "status": report.status,

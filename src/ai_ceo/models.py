@@ -177,6 +177,7 @@ class MemoryNote:
 @dataclass
 class AgentReport:
     summary: str
+    direct_response: str = ""
     deliverables: List[str] = field(default_factory=list)
     memory_notes: List[MemoryNote] = field(default_factory=list)
     decision_proposals: List[DecisionPlan] = field(default_factory=list)
@@ -190,6 +191,7 @@ class AgentReport:
     def from_dict(cls, raw: Dict[str, Any]) -> "AgentReport":
         return cls(
             summary=str(raw.get("summary", "")).strip(),
+            direct_response=str(raw.get("direct_response", "")).strip(),
             deliverables=[
                 str(item).strip()
                 for item in raw.get("deliverables", [])
@@ -229,6 +231,7 @@ class AgentReport:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "summary": self.summary,
+            "direct_response": self.direct_response,
             "deliverables": list(self.deliverables),
             "memory_notes": [note.to_dict() for note in self.memory_notes],
             "decision_proposals": [item.to_dict() for item in self.decision_proposals],

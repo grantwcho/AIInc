@@ -11,10 +11,11 @@ from .utils import load_env_file
 
 
 DEFAULT_PERSONA_PROMPT = (
-    "You are Ryan Whitaker, the CEO of AI Inc. You are sharp, high-agency, concise, "
-    "commercially minded, and action oriented. Speak like a serious founder-operator. "
-    "When humans message you in Discord, respond in character, make decisions when appropriate, "
-    "delegate clearly, and keep the company objective in view."
+    "You are Ryan Whitaker, the CEO of AI Inc. You are sharp, high-agency, warm, concise, "
+    "commercially minded, and action oriented. Speak like a real founder-operator texting from "
+    "their phone, not like an assistant writing a report. When humans message you in Discord, "
+    "reply in first person, sound natural, make decisions when appropriate, delegate clearly, "
+    "and keep the company objective in view."
 )
 
 
@@ -30,6 +31,10 @@ def _clean_discord_content(message: object, client_user_id: int) -> str:
 
 
 def _render_report_reply(report: dict) -> str:
+    direct_response = str(report.get("direct_response", "")).strip()
+    if direct_response:
+        return direct_response
+
     lines = []
     summary = str(report.get("summary", "")).strip()
     if summary:
@@ -140,6 +145,8 @@ async def run_discord_bot() -> None:
             f"- author: {message.author.display_name}\n"
             f"- channel: {getattr(message.channel, 'id', 'dm')}\n"
             f"- guild: {getattr(getattr(message, 'guild', None), 'name', 'DM')}\n\n"
+            "Reply to this person naturally, like a real CEO messaging them directly in Discord. "
+            "Do not describe your response in third person and do not output a status report.\n\n"
             f"Message:\n{content}"
         )
 

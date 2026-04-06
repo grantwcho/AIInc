@@ -110,6 +110,7 @@ Rules:
 Return valid JSON with this shape:
 {
   "summary": "what you accomplished",
+  "direct_response": "the exact natural-language reply to send back to the human if this cycle came from Discord or chat. Write like a real person in first person, not like a status report. If not applicable, return an empty string.",
   "deliverables": ["deliverable 1", "deliverable 2"],
   "memory_notes": [
     {
@@ -171,9 +172,22 @@ Return valid JSON with this shape:
 
 
 def build_agent_user_prompt(context: Dict[str, object]) -> str:
+    extra_guidance = ""
+    if str(context.get("surface", "")).startswith("discord"):
+        extra_guidance = (
+            "\n\nAdditional instructions for this run:\n"
+            "- This message came from Discord.\n"
+            "- The human expects a natural, conversational reply.\n"
+            "- Write `direct_response` as the exact message you would send back.\n"
+            "- Sound like a real CEO texting, not a workflow engine.\n"
+            "- Be warm, sharp, concise, and specific.\n"
+            "- Do not narrate yourself in third person.\n"
+            "- Do not say things like 'responded to query' or 'processed request'.\n"
+        )
     return (
         "Use the following JSON context to execute the assigned work.\n\n"
         "Context:\n"
         f"{json.dumps(context, indent=2, sort_keys=True)}\n\n"
+        f"{extra_guidance}"
         "Return JSON only."
     )

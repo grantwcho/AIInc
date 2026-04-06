@@ -24,6 +24,18 @@ class DiscordBotTests(unittest.TestCase):
         self.assertIn("- Launch customer interviews.", rendered)
         self.assertIn("Needs:", rendered)
 
+    def test_render_report_reply_prefers_direct_response(self) -> None:
+        report = {
+            "summary": "Internal summary.",
+            "direct_response": "Hey Grant, yes, I'm here. What's the most important thing you want me focused on?",
+            "deliverables": ["Should not be rendered."],
+        }
+        rendered = _render_report_reply(report)
+        self.assertEqual(
+            rendered,
+            "Hey Grant, yes, I'm here. What's the most important thing you want me focused on?",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
