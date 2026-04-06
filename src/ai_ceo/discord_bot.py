@@ -51,6 +51,13 @@ def _slugify_channel_name(value: str) -> str:
     return (slug or "agent")[:90]
 
 
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _render_report_reply(report: dict) -> str:
     direct_response = str(report.get("direct_response", "")).strip()
     if direct_response:
@@ -114,6 +121,17 @@ def _format_cycle_summary(result: Any, non_ceo_reports: List[Dict[str, Any]]) ->
         f"Queued {queued_work} work item(s) and processed {processed} non-CEO agent cycle(s)."
     )
     return "\n".join(lines).strip()
+
+
+def _autonomous_trigger() -> str:
+    return os.getenv(
+        "AI_CEO_AUTONOMOUS_TRIGGER",
+        (
+            "Run the next highest-leverage CEO cycle. Decide what the company should do next, "
+            "create or update agents if needed, delegate work, and push the business toward "
+            "product-market fit, growth, revenue, and durable advantage."
+        ),
+    ).strip()
 
 
 def _ensure_agent(engine: CEOEngine, store: MemoryStore, model_name: str) -> str:
@@ -188,6 +206,16 @@ async def _ensure_agent_channel(guild: Any, category: Any, agent_id: str, agent_
     return await guild.create_text_channel(desired_name, category=category, topic=topic)
 
 
+async def _ensure_updates_channel(guild: Any) -> Any:
+    channel_name = _slugify_channel_name(
+        os.getenv("AI_CEO_DISCORD_UPDATES_CHANNEL", "ceo-updates")
+    )
+    for channel in getattr(guild, "text_channels", []):
+        if channel.name == channel_name:
+            return channel
+    return await guild.create_text_channel(channel_name)
+
+
 async def _publish_agent_report_to_guild(guild: Any, report: Dict[str, Any]) -> None:
     category = await _ensure_agent_category(guild)
     if category is None:
@@ -235,6 +263,51 @@ async def _run_company_loop(engine: CEOEngine, trigger: str, max_passes: int = 6
     return {"cycle_result": result, "reports": all_reports}
 
 
+async def _publish_company_loop(
+    *,
+    client: Any,
+    store: MemoryStore,
+    agent_id: str,
+    loop_result: Dict[str, Any],
+    reply_channel: Optional[Any] = None,
+) -> None:
+    result = loop_result["cycle_result"]
+    reports = loop_result["reports"]
+    guild = _resolve_home_guild(client)
+    non_ceo_reports = [item for item in reports if item.get("agent_id") != agent_id]
+
+    if guild is not None:
+        await _ensure_created_agent_channels(guild, store, result)
+        for item in non_ceo_reports:
+            await _publish_agent_report_to_guild(guild, item)
+        if non_ceo_reports:
+            updates_channel = reply_channel or await _ensure_updates_channel(guild)
+            await updates_channel.send(_format_cycle_summary(result, non_ceo_reports))
+
+
+async def _autonomous_ceo_loop(client: Any, engine: CEOEngine, store: MemoryStore, agent_id: str) -> None:
+    interval_seconds = max(30, int(os.getenv("AI_CEO_AUTONOMOUS_INTERVAL_SECONDS", "300")))
+    run_immediately = _env_flag("AI_CEO_AUTONOMOUS_RUN_ON_BOOT", default=True)
+    cycle_lock: asyncio.Lock = client.autonomous_cycle_lock
+
+    if not run_immediately:
+        await asyncio.sleep(interval_seconds)
+
+    while not client.is_closed():
+        async with cycle_lock:
+            loop_result = await _run_company_loop(
+                engine=engine,
+                trigger=_autonomous_trigger(),
+            )
+            await _publish_company_loop(
+                client=client,
+                store=store,
+                agent_id=agent_id,
+                loop_result=loop_result,
+            )
+        await asyncio.sleep(interval_seconds)
+
+
 async def run_discord_bot() -> None:
     load_env_file()
 
@@ -269,10 +342,16 @@ async def run_discord_bot() -> None:
     intents.guilds = True
     intents.messages = True
     client = discord.Client(intents=intents)
+    client.autonomous_cycle_lock = asyncio.Lock()
+    client.autonomous_task = None
 
     @client.event
     async def on_ready() -> None:
         print(f"Discord agent online as {client.user} for agent {agent_id}")
+        if _env_flag("AI_CEO_AUTONOMOUS_ENABLED", default=False) and client.autonomous_task is None:
+            client.autonomous_task = asyncio.create_task(
+                _autonomous_ceo_loop(client=client, engine=engine, store=store, agent_id=agent_id)
+            )
 
     @client.event
     async def on_message(message: discord.Message) -> None:
@@ -311,27 +390,26 @@ async def run_discord_bot() -> None:
             thread_id=str(message.channel.id),
         )
 
-        async with message.channel.typing():
-            loop_result = await _run_company_loop(
-                engine=engine,
-                trigger=f"Discord inbound from {message.author.display_name}: {content}",
-            )
+        async with client.autonomous_cycle_lock:
+            async with message.channel.typing():
+                loop_result = await _run_company_loop(
+                    engine=engine,
+                    trigger=f"Discord inbound from {message.author.display_name}: {content}",
+                )
 
-        result = loop_result["cycle_result"]
         reports = loop_result["reports"]
         report = next((item for item in reports if item.get("agent_id") == agent_id), None)
         if report is None:
             await message.reply("I logged that, but I did not generate a reply.")
             return
 
-        guild = message.guild or _resolve_home_guild(client)
-        if guild is not None:
-            await _ensure_created_agent_channels(guild, store, result)
-            non_ceo_reports = [item for item in reports if item.get("agent_id") != agent_id]
-            for item in non_ceo_reports:
-                await _publish_agent_report_to_guild(guild, item)
-            if non_ceo_reports:
-                await message.channel.send(_format_cycle_summary(result, non_ceo_reports))
+        await _publish_company_loop(
+            client=client,
+            store=store,
+            agent_id=agent_id,
+            loop_result=loop_result,
+            reply_channel=message.channel if message.guild is not None else None,
+        )
 
         reply = _render_report_reply(report)
         await message.reply(reply, mention_author=False)

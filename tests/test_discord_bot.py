@@ -7,7 +7,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ai_ceo.discord_bot import (
+    _autonomous_trigger,
     _clean_discord_content,
+    _env_flag,
     _format_agent_report_for_channel,
     _format_cycle_summary,
     _load_persona_prompt,
@@ -91,6 +93,28 @@ class DiscordBotTests(unittest.TestCase):
         )
         rendered = _format_cycle_summary(result, [{"agent_id": "growth_architect"}])
         self.assertIn("Created agents: Growth Architect", rendered)
+
+    def test_env_flag_parses_truthy_values(self) -> None:
+        original = os.environ.get("AI_CEO_AUTONOMOUS_ENABLED")
+        os.environ["AI_CEO_AUTONOMOUS_ENABLED"] = "true"
+        try:
+            self.assertTrue(_env_flag("AI_CEO_AUTONOMOUS_ENABLED"))
+        finally:
+            if original is None:
+                os.environ.pop("AI_CEO_AUTONOMOUS_ENABLED", None)
+            else:
+                os.environ["AI_CEO_AUTONOMOUS_ENABLED"] = original
+
+    def test_autonomous_trigger_uses_env_override(self) -> None:
+        original = os.environ.get("AI_CEO_AUTONOMOUS_TRIGGER")
+        os.environ["AI_CEO_AUTONOMOUS_TRIGGER"] = "Do the next thing."
+        try:
+            self.assertEqual(_autonomous_trigger(), "Do the next thing.")
+        finally:
+            if original is None:
+                os.environ.pop("AI_CEO_AUTONOMOUS_TRIGGER", None)
+            else:
+                os.environ["AI_CEO_AUTONOMOUS_TRIGGER"] = original
 
 
 if __name__ == "__main__":

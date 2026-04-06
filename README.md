@@ -150,6 +150,9 @@ AI_CEO_DISCORD_AGENT_NAME=Ryan Whitaker
 AI_CEO_DISCORD_AGENT_ROLE=CEO
 AI_CEO_DISCORD_AGENT_MANDATE=Lead AI Inc, make high-leverage decisions, and coordinate the company through Discord.
 AI_CEO_DISCORD_SYSTEM_PROMPT_FILE=prompts/ryan_whitaker.txt
+AI_CEO_AUTONOMOUS_ENABLED=true
+AI_CEO_AUTONOMOUS_INTERVAL_SECONDS=300
+AI_CEO_DISCORD_UPDATES_CHANNEL=ceo-updates
 ```
 
 Store the persona prompt in a versioned file such as [prompts/ryan_whitaker.txt](/Users/grantcho/Documents/AIInc/prompts/ryan_whitaker.txt). On startup, the Discord runtime loads that file and refreshes the saved agent prompt automatically.
@@ -172,8 +175,9 @@ Behavior:
 
 - on first boot, the runtime creates the configured Discord-backed agent if it does not already exist,
 - when someone DMs the bot or mentions it in a server, that message is queued into the agent's inbox,
-- the agent is processed through the normal `Brain` abstraction, and
-- the bot replies with the agent's summary and deliverables.
+- the agent is processed through the normal `Brain` abstraction,
+- created agents are mirrored into Discord channels under the `agents` category, and
+- if `AI_CEO_AUTONOMOUS_ENABLED=true`, the CEO also runs on a fixed interval without needing human prompts and posts cycle updates to the configured updates channel.
 
 ## What "Permanent Agent Creation" Means Here
 
