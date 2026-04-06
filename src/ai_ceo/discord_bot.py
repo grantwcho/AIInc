@@ -151,6 +151,15 @@ def _format_admin_dm(result: Any, non_ceo_reports: List[Dict[str, Any]]) -> str:
     return "\n".join(lines).strip()
 
 
+def _format_execution_summary(reports: List[Dict[str, Any]]) -> str:
+    lines = ["Ryan execution update"]
+    for report in reports[:5]:
+        agent_name = str(report.get("agent_name", report.get("agent_id", "Agent"))).strip()
+        summary = str(report.get("summary", "")).strip() or "Processed work."
+        lines.append(f"- {agent_name}: {summary}")
+    return "\n".join(lines).strip()
+
+
 def _format_boot_dm(idle_ceo_seconds: int, poll_seconds: int) -> str:
     return (
         "Ryan CEO reactive loop is online.\n"
@@ -380,15 +389,6 @@ async def _publish_company_loop(
     await _send_admin_dm(client, _format_admin_dm(result, non_ceo_reports))
 
 
-def _format_execution_dm(reports: List[Dict[str, Any]]) -> str:
-    lines = ["Ryan execution update"]
-    for report in reports[:5]:
-        lines.append(
-            f"- {report.get('agent_name', report.get('agent_id', 'Agent'))}: {report.get('summary', '')}"
-        )
-    return "\n".join(lines).strip()
-
-
 async def _publish_queue_reports(
     *,
     client: Any,
@@ -399,12 +399,14 @@ async def _publish_queue_reports(
 
     guild = _resolve_home_guild(client)
     if guild is not None:
+        updates_channel = await _ensure_updates_channel(guild)
+        await updates_channel.send(_format_execution_summary(reports))
         for item in reports:
             await _publish_agent_report_to_guild(guild, item)
 
     await _send_admin_dm(
         client,
-        _format_execution_dm(reports),
+        _format_execution_summary(reports),
         dedupe_key=f"execution:{'|'.join(str(item.get('agent_id', '')) for item in reports[:5])}:{len(reports)}",
     )
 
