@@ -174,6 +174,18 @@ def _autonomous_timeout_seconds() -> int:
     return max(30, int(os.getenv("AI_CEO_AUTONOMOUS_TIMEOUT_SECONDS", "180")))
 
 
+def _queue_batch_size() -> int:
+    return max(1, int(os.getenv("AI_CEO_AUTONOMOUS_QUEUE_BATCH_SIZE", "1")))
+
+
+def _ceo_agent_batch_size() -> int:
+    return max(1, int(os.getenv("AI_CEO_AUTONOMOUS_CEO_AGENT_BATCH_SIZE", "2")))
+
+
+def _ceo_follow_up_passes() -> int:
+    return max(1, int(os.getenv("AI_CEO_AUTONOMOUS_CEO_FOLLOWUP_PASSES", "2")))
+
+
 def _reactive_poll_seconds() -> int:
     return max(1, int(os.getenv("AI_CEO_AUTONOMOUS_IDLE_POLL_SECONDS", "3")))
 
@@ -343,16 +355,16 @@ async def _ensure_created_agent_channels(guild: Any, store: MemoryStore, result:
         )
 
 
-async def _run_company_loop(engine: CEOEngine, trigger: str, max_passes: int = 6) -> Dict[str, Any]:
-    result = await asyncio.to_thread(engine.run_cycle, trigger, 25)
+async def _run_company_loop(engine: CEOEngine, trigger: str) -> Dict[str, Any]:
+    result = await asyncio.to_thread(engine.run_cycle, trigger, _ceo_agent_batch_size())
     all_reports = list(result.agent_reports)
 
-    for pass_index in range(max_passes - 1):
+    for pass_index in range(_ceo_follow_up_passes() - 1):
         reports = await asyncio.to_thread(
             engine.process_agent_queue,
             f"{trigger} | follow-up pass {pass_index + 1}",
             None,
-            25,
+            _queue_batch_size(),
         )
         if not reports:
             break
@@ -362,7 +374,7 @@ async def _run_company_loop(engine: CEOEngine, trigger: str, max_passes: int = 6
 
 
 async def _run_queue_reaction(engine: CEOEngine, trigger: str) -> List[Dict[str, Any]]:
-    return await asyncio.to_thread(engine.process_agent_queue, trigger, None, 25)
+    return await asyncio.to_thread(engine.process_agent_queue, trigger, None, _queue_batch_size())
 
 
 async def _publish_company_loop(
