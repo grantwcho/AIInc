@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ai_ceo.discord_bot import (
     _autonomous_trigger,
+    _cycle_has_momentum,
     _clean_discord_content,
     _env_flag,
     _format_admin_dm,
@@ -145,6 +146,35 @@ class DiscordBotTests(unittest.TestCase):
         self.assertIn("Ryan CEO update", rendered)
         self.assertIn("Created agents: Head of Product", rendered)
         self.assertIn("- Ship MVP fast: Use the narrowest wedge first", rendered)
+
+    def test_cycle_has_momentum_when_agents_created(self) -> None:
+        result = CycleResult(
+            cycle_id="cycle_1",
+            objective=ObjectiveState(
+                company_name="Go Unicorn",
+                ultimate_objective="Win.",
+                strategy="Move fast.",
+            ),
+            reflection_summary="I created a team.",
+            self_prompt="What's next?",
+            applied_agent_actions=[
+                AgentAction(action="create", agent_id="head_of_product", name="Head of Product")
+            ],
+        )
+        self.assertTrue(_cycle_has_momentum({"cycle_result": result, "reports": []}))
+
+    def test_cycle_has_no_momentum_when_nothing_changed(self) -> None:
+        result = CycleResult(
+            cycle_id="cycle_1",
+            objective=ObjectiveState(
+                company_name="Go Unicorn",
+                ultimate_objective="Win.",
+                strategy="Move fast.",
+            ),
+            reflection_summary="No change.",
+            self_prompt="What's next?",
+        )
+        self.assertFalse(_cycle_has_momentum({"cycle_result": result, "reports": []}))
 
 
 if __name__ == "__main__":

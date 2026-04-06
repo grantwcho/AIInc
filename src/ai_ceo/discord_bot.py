@@ -154,7 +154,7 @@ def _format_admin_dm(result: Any, non_ceo_reports: List[Dict[str, Any]]) -> str:
 def _format_boot_dm(interval_seconds: int) -> str:
     return (
         "Ryan CEO autonomous loop is online.\n"
-        f"Interval: {interval_seconds} seconds.\n"
+        f"Idle backoff: {interval_seconds} seconds.\n"
         f"Guild: {os.getenv('AI_CEO_DISCORD_GUILD_ID', '(auto)')}\n"
         f"Admin user: {os.getenv('AI_CEO_DISCORD_ADMIN_USER_ID', '(unset)')}"
     )
@@ -162,6 +162,22 @@ def _format_boot_dm(interval_seconds: int) -> str:
 
 def _autonomous_timeout_seconds() -> int:
     return max(30, int(os.getenv("AI_CEO_AUTONOMOUS_TIMEOUT_SECONDS", "180")))
+
+
+def _cycle_has_momentum(loop_result: Dict[str, Any]) -> bool:
+    result = loop_result["cycle_result"]
+    reports = loop_result["reports"]
+    if result.applied_agent_actions:
+        return True
+    if result.recorded_decisions:
+        return True
+    if result.queued_work_items:
+        return True
+    if result.queued_messages:
+        return True
+    if reports:
+        return True
+    return False
 
 
 def _autonomous_trigger() -> str:
@@ -361,17 +377,26 @@ async def _send_admin_dm(client: Any, content: str) -> None:
 
 
 async def _autonomous_ceo_loop(client: Any, engine: CEOEngine, store: MemoryStore, agent_id: str) -> None:
-    interval_seconds = max(30, int(os.getenv("AI_CEO_AUTONOMOUS_INTERVAL_SECONDS", "300")))
+    interval_seconds = max(15, int(os.getenv("AI_CEO_AUTONOMOUS_INTERVAL_SECONDS", "300")))
     timeout_seconds = _autonomous_timeout_seconds()
     run_immediately = _env_flag("AI_CEO_AUTONOMOUS_RUN_ON_BOOT", default=True)
+    momentum_sleep_seconds = max(
+        1, int(os.getenv("AI_CEO_AUTONOMOUS_MOMENTUM_SLEEP_SECONDS", "3"))
+    )
+    max_continuous_cycles = max(
+        1, int(os.getenv("AI_CEO_AUTONOMOUS_MAX_CONTINUOUS_CYCLES", "25"))
+    )
     cycle_lock: asyncio.Lock = client.autonomous_cycle_lock
+    continuous_cycles = 0
 
     print(
         "Autonomous CEO loop configured:",
         {
             "enabled": True,
             "run_immediately": run_immediately,
-            "interval_seconds": interval_seconds,
+            "idle_backoff_seconds": interval_seconds,
+            "momentum_sleep_seconds": momentum_sleep_seconds,
+            "max_continuous_cycles": max_continuous_cycles,
             "timeout_seconds": timeout_seconds,
             "guild_id": os.getenv("AI_CEO_DISCORD_GUILD_ID", ""),
             "admin_user_id": os.getenv("AI_CEO_DISCORD_ADMIN_USER_ID", ""),
@@ -415,6 +440,14 @@ async def _autonomous_ceo_loop(client: Any, engine: CEOEngine, store: MemoryStor
                     agent_id=agent_id,
                     loop_result=loop_result,
                 )
+                if _cycle_has_momentum(loop_result) and continuous_cycles < max_continuous_cycles:
+                    continuous_cycles += 1
+                    print(
+                        f"Autonomous CEO loop continuing immediately (cycle streak {continuous_cycles})"
+                    )
+                    await asyncio.sleep(momentum_sleep_seconds)
+                    continue
+                continuous_cycles = 0
         except asyncio.TimeoutError:
             message = (
                 f"Ryan CEO cycle timed out after {timeout_seconds} seconds.\n"
@@ -423,10 +456,13 @@ async def _autonomous_ceo_loop(client: Any, engine: CEOEngine, store: MemoryStor
             )
             print(message)
             await _send_admin_dm(client, message)
+            continuous_cycles = 0
         except Exception as exc:
             print(f"Autonomous CEO loop failed: {exc}")
             print(traceback.format_exc())
             await _send_admin_dm(client, f"Ryan CEO loop hit an error:\n{exc}")
+            continuous_cycles = 0
+        print(f"Autonomous CEO loop idle; sleeping for {interval_seconds} seconds")
         await asyncio.sleep(interval_seconds)
 
 

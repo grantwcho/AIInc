@@ -151,7 +151,9 @@ AI_CEO_DISCORD_AGENT_ROLE=CEO
 AI_CEO_DISCORD_AGENT_MANDATE=Lead AI Inc, make high-leverage decisions, and coordinate the company through Discord.
 AI_CEO_DISCORD_SYSTEM_PROMPT_FILE=prompts/ryan_whitaker.txt
 AI_CEO_AUTONOMOUS_ENABLED=true
-AI_CEO_AUTONOMOUS_INTERVAL_SECONDS=300
+AI_CEO_AUTONOMOUS_INTERVAL_SECONDS=60
+AI_CEO_AUTONOMOUS_MOMENTUM_SLEEP_SECONDS=3
+AI_CEO_AUTONOMOUS_MAX_CONTINUOUS_CYCLES=25
 AI_CEO_DISCORD_UPDATES_CHANNEL=ceo-updates
 ```
 
@@ -177,7 +179,7 @@ Behavior:
 - when someone DMs the bot or mentions it in a server, that message is queued into the agent's inbox,
 - the agent is processed through the normal `Brain` abstraction,
 - created agents are mirrored into Discord channels under the `agents` category, and
-- if `AI_CEO_AUTONOMOUS_ENABLED=true`, the CEO also runs on a fixed interval without needing human prompts and posts cycle updates to the configured updates channel.
+- if `AI_CEO_AUTONOMOUS_ENABLED=true`, the CEO keeps looping while there is momentum, then backs off for `AI_CEO_AUTONOMOUS_INTERVAL_SECONDS` when the company goes idle.
 
 ## What "Permanent Agent Creation" Means Here
 
