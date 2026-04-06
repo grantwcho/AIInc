@@ -160,6 +160,10 @@ def _format_boot_dm(interval_seconds: int) -> str:
     )
 
 
+def _autonomous_timeout_seconds() -> int:
+    return max(30, int(os.getenv("AI_CEO_AUTONOMOUS_TIMEOUT_SECONDS", "180")))
+
+
 def _autonomous_trigger() -> str:
     return os.getenv(
         "AI_CEO_AUTONOMOUS_TRIGGER",
@@ -358,6 +362,7 @@ async def _send_admin_dm(client: Any, content: str) -> None:
 
 async def _autonomous_ceo_loop(client: Any, engine: CEOEngine, store: MemoryStore, agent_id: str) -> None:
     interval_seconds = max(30, int(os.getenv("AI_CEO_AUTONOMOUS_INTERVAL_SECONDS", "300")))
+    timeout_seconds = _autonomous_timeout_seconds()
     run_immediately = _env_flag("AI_CEO_AUTONOMOUS_RUN_ON_BOOT", default=True)
     cycle_lock: asyncio.Lock = client.autonomous_cycle_lock
 
@@ -367,6 +372,7 @@ async def _autonomous_ceo_loop(client: Any, engine: CEOEngine, store: MemoryStor
             "enabled": True,
             "run_immediately": run_immediately,
             "interval_seconds": interval_seconds,
+            "timeout_seconds": timeout_seconds,
             "guild_id": os.getenv("AI_CEO_DISCORD_GUILD_ID", ""),
             "admin_user_id": os.getenv("AI_CEO_DISCORD_ADMIN_USER_ID", ""),
         },
@@ -380,9 +386,12 @@ async def _autonomous_ceo_loop(client: Any, engine: CEOEngine, store: MemoryStor
         try:
             async with cycle_lock:
                 print("Autonomous CEO cycle starting")
-                loop_result = await _run_company_loop(
-                    engine=engine,
-                    trigger=_autonomous_trigger(),
+                loop_result = await asyncio.wait_for(
+                    _run_company_loop(
+                        engine=engine,
+                        trigger=_autonomous_trigger(),
+                    ),
+                    timeout=timeout_seconds,
                 )
                 result = loop_result["cycle_result"]
                 reports = loop_result["reports"]
@@ -406,6 +415,14 @@ async def _autonomous_ceo_loop(client: Any, engine: CEOEngine, store: MemoryStor
                     agent_id=agent_id,
                     loop_result=loop_result,
                 )
+        except asyncio.TimeoutError:
+            message = (
+                f"Ryan CEO cycle timed out after {timeout_seconds} seconds.\n"
+                f"Model: {os.getenv('AI_CEO_DISCORD_MODEL') or os.getenv('AI_CEO_MODEL', '(unset)')}\n"
+                "Recommendation: use a faster model for the autonomous loop."
+            )
+            print(message)
+            await _send_admin_dm(client, message)
         except Exception as exc:
             print(f"Autonomous CEO loop failed: {exc}")
             print(traceback.format_exc())
