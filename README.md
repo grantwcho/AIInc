@@ -125,6 +125,54 @@ export AI_CEO_MODEL="gpt-4.1-mini"
 ai-ceo cycle --brain openai --input "Design the next 90 days of company expansion."
 ```
 
+If `ANTHROPIC_API_KEY` is set, you can use Claude instead:
+
+```bash
+export ANTHROPIC_API_KEY="your-key"
+export AI_CEO_MODEL="claude-opus-4-1-20250805"
+ai-ceo cycle --brain anthropic --input "Design the next 90 days of company expansion."
+```
+
+In `auto` mode, the runtime now prefers Anthropic first, then OpenAI, then the heuristic fallback.
+
+## Discord Agent Runtime
+
+You can attach a persistent agent to a Discord bot persona so it can think through the same queue-and-memory system used by the CLI runtime.
+
+1. Put your secrets in `.env.local`:
+
+```bash
+ANTHROPIC_API_KEY=your-key
+DISCORD_BOT_TOKEN=your-discord-token
+AI_CEO_MODEL=claude-opus-4-1-20250805
+AI_CEO_DISCORD_AGENT_ID=ryan_whitaker
+AI_CEO_DISCORD_AGENT_NAME=Ryan Whitaker
+AI_CEO_DISCORD_AGENT_ROLE=CEO
+AI_CEO_DISCORD_AGENT_MANDATE=Lead AI Inc, make high-leverage decisions, and coordinate the company through Discord.
+AI_CEO_DISCORD_SYSTEM_PROMPT=You are Ryan Whitaker, the CEO of AI Inc. Speak like a sharp founder-operator. Be concise, decisive, strategic, and highly agentic.
+```
+
+2. Initialize the company once if you have not already:
+
+```bash
+ai-ceo init \
+  --company "AI Inc" \
+  --objective "Build the most successful company in the world by creating compounding AI products, teams, and market advantages."
+```
+
+3. Start the Discord runtime:
+
+```bash
+ai-ceo-discord
+```
+
+Behavior:
+
+- on first boot, the runtime creates the configured Discord-backed agent if it does not already exist,
+- when someone DMs the bot or mentions it in a server, that message is queued into the agent's inbox,
+- the agent is processed through the normal `Brain` abstraction, and
+- the bot replies with the agent's summary and deliverables.
+
 ## What "Permanent Agent Creation" Means Here
 
 When an agent is created, it is persisted in the agent registry with:

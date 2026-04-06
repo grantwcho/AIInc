@@ -286,13 +286,76 @@ class OpenAIBrain(Brain):
         return AgentReport.from_dict(payload)
 
 
+class AnthropicBrain(Brain):
+    def __init__(self, model: Optional[str] = None) -> None:
+        self.model = model or os.getenv(
+            "AI_CEO_MODEL", os.getenv("ANTHROPIC_MODEL", "claude-opus-4-1-20250805")
+        )
+        self._client = self._build_client()
+
+    def _build_client(self) -> Any:
+        try:
+            from anthropic import Anthropic
+        except ImportError as exc:
+            raise BrainError(
+                "The anthropic package is not installed. Install dependencies or use --brain heuristic."
+            ) from exc
+        return Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+    def _call_json(self, system_prompt: str, user_prompt: str) -> Dict[str, Any]:
+        try:
+            response = self._client.messages.create(
+                model=self.model,
+                max_tokens=4000,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_prompt}],
+            )
+        except Exception as exc:
+            raise BrainError(f"Anthropic request failed: {exc}") from exc
+
+        text_parts = []
+        for block in getattr(response, "content", []) or []:
+            if getattr(block, "type", "") == "text":
+                text_parts.append(getattr(block, "text", ""))
+        text = "\n".join(part for part in text_parts if part).strip()
+        if not text:
+            raise BrainError("Model returned no text output.")
+        try:
+            return extract_json_object(text)
+        except Exception as exc:
+            raise BrainError(f"Failed to parse model output as JSON: {exc}") from exc
+
+    def run_ceo_cycle(self, context: Dict[str, Any]) -> BrainOutput:
+        payload = self._call_json(
+            system_prompt=build_ceo_system_prompt(),
+            user_prompt=build_ceo_user_prompt(context),
+        )
+        return BrainOutput.from_dict(payload)
+
+    def run_agent_cycle(self, agent: AgentSpec, context: Dict[str, Any]) -> AgentReport:
+        agent_context = dict(context)
+        agent_context["agent"] = agent.to_dict()
+        payload = self._call_json(
+            system_prompt=build_agent_system_prompt(),
+            user_prompt=build_agent_user_prompt(agent_context),
+        )
+        return AgentReport.from_dict(payload)
+
+
 def resolve_brain(mode: str, model: Optional[str] = None) -> Brain:
     lowered = (mode or "auto").strip().lower()
     if lowered == "heuristic":
         return HeuristicBrain()
     if lowered == "openai":
         return OpenAIBrain(model=model)
+    if lowered == "anthropic":
+        return AnthropicBrain(model=model)
     if lowered == "auto":
+        if os.getenv("ANTHROPIC_API_KEY"):
+            try:
+                return AnthropicBrain(model=model)
+            except BrainError:
+                pass
         if os.getenv("OPENAI_API_KEY"):
             try:
                 return OpenAIBrain(model=model)

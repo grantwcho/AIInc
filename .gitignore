@@ -7,4 +7,4 @@ build/
 *.egg-info/
 state/*.sqlite3
 state/*.db
-
+.env.local

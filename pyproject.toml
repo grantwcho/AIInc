@@ -9,12 +9,15 @@ description = "A persistent AI CEO orchestrator with long-term memory and agent 
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
+  "anthropic>=0.34.0",
+  "discord.py>=2.4.0",
   "openai>=1.50.0",
 ]
 
 [project.scripts]
 ai-ceo = "ai_ceo.cli:main"
 ai-ceo-dashboard = "ai_ceo.dashboard:main"
+ai-ceo-discord = "ai_ceo.discord_bot:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

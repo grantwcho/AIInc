@@ -8,6 +8,7 @@ from typing import Any, List, Optional
 from .brain import resolve_brain
 from .engine import CEOEngine
 from .store import MemoryStore
+from .utils import load_env_file
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -32,7 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
     cycle_parser.add_argument(
         "--brain",
         default="auto",
-        choices=["auto", "openai", "heuristic"],
+        choices=["auto", "openai", "anthropic", "heuristic"],
         help="Which brain implementation to use.",
     )
     cycle_parser.add_argument(
@@ -54,7 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
     process_parser.add_argument(
         "--brain",
         default="auto",
-        choices=["auto", "openai", "heuristic"],
+        choices=["auto", "openai", "anthropic", "heuristic"],
         help="Which brain implementation to use.",
     )
     process_parser.add_argument("--model", default=None, help="Model name for OpenAI mode.")
@@ -158,6 +159,7 @@ def _print_json(payload: Any) -> None:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    load_env_file()
     parser = build_parser()
     args = parser.parse_args(argv)
 
