@@ -6,7 +6,15 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ai_ceo.discord_bot import _clean_discord_content, _load_persona_prompt, _render_report_reply
+from ai_ceo.discord_bot import (
+    _clean_discord_content,
+    _format_agent_report_for_channel,
+    _format_cycle_summary,
+    _load_persona_prompt,
+    _render_report_reply,
+    _slugify_channel_name,
+)
+from ai_ceo.models import AgentAction, ObjectiveState, CycleResult
 
 
 class DiscordBotTests(unittest.TestCase):
@@ -52,6 +60,37 @@ class DiscordBotTests(unittest.TestCase):
                     os.environ.pop("AI_CEO_DISCORD_SYSTEM_PROMPT_FILE", None)
                 else:
                     os.environ["AI_CEO_DISCORD_SYSTEM_PROMPT_FILE"] = original
+
+    def test_slugify_channel_name_matches_discord_style(self) -> None:
+        self.assertEqual(_slugify_channel_name("Market Analyst_1"), "market-analyst-1")
+
+    def test_format_agent_report_for_channel(self) -> None:
+        report = {
+            "agent_name": "Growth Architect",
+            "summary": "I mapped the first growth loop.",
+            "deliverables": ["Acquisition loop draft", "Activation experiment"],
+        }
+        rendered = _format_agent_report_for_channel(report)
+        self.assertIn("**Growth Architect**", rendered)
+        self.assertIn("- Acquisition loop draft", rendered)
+
+    def test_format_cycle_summary_mentions_created_agents(self) -> None:
+        result = CycleResult(
+            cycle_id="cycle_1",
+            objective=ObjectiveState(
+                company_name="Go Unicorn",
+                ultimate_objective="Win.",
+                strategy="Move fast.",
+            ),
+            reflection_summary="I staffed the next wedge.",
+            self_prompt="What's next?",
+            applied_agent_actions=[
+                AgentAction(action="create", agent_id="growth_architect", name="Growth Architect")
+            ],
+            queued_work_items=[],
+        )
+        rendered = _format_cycle_summary(result, [{"agent_id": "growth_architect"}])
+        self.assertIn("Created agents: Growth Architect", rendered)
 
 
 if __name__ == "__main__":

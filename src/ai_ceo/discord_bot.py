@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
+from typing import Any, Dict, List, Optional
 
 from .brain import resolve_brain
 from .engine import CEOEngine
@@ -43,6 +45,12 @@ def _clean_discord_content(message: object, client_user_id: int) -> str:
     return content
 
 
+def _slugify_channel_name(value: str) -> str:
+    slug = re.sub(r"[^a-z0-9-]+", "-", value.strip().lower().replace("_", "-"))
+    slug = re.sub(r"-{2,}", "-", slug).strip("-")
+    return (slug or "agent")[:90]
+
+
 def _render_report_reply(report: dict) -> str:
     direct_response = str(report.get("direct_response", "")).strip()
     if direct_response:
@@ -66,6 +74,46 @@ def _render_report_reply(report: dict) -> str:
 
     payload = "\n".join(lines).strip()
     return payload or "I processed that and updated my queue."
+
+
+def _format_agent_report_for_channel(report: Dict[str, Any]) -> str:
+    lines = [f"**{report.get('agent_name', report.get('agent_id', 'Agent'))}**"]
+    summary = str(report.get("summary", "")).strip()
+    if summary:
+        lines.append(summary)
+
+    deliverables = [str(item).strip() for item in report.get("deliverables", []) if str(item).strip()]
+    if deliverables:
+        lines.append("")
+        lines.extend(f"- {item}" for item in deliverables[:5])
+
+    needs = [str(item).strip() for item in report.get("needs", []) if str(item).strip()]
+    if needs:
+        lines.append("")
+        lines.append("Needs:")
+        lines.extend(f"- {item}" for item in needs[:3])
+
+    return "\n".join(lines).strip()
+
+
+def _format_cycle_summary(result: Any, non_ceo_reports: List[Dict[str, Any]]) -> str:
+    created_agents = [
+        action.get("name") or action.get("agent_id")
+        for action in [item.to_dict() for item in result.applied_agent_actions]
+        if action.get("action") == "create"
+    ]
+    queued_work = len(result.queued_work_items)
+    processed = len(non_ceo_reports)
+
+    lines = [result.reflection_summary.strip() or "I ran a company cycle."]
+    if created_agents:
+        lines.append("")
+        lines.append(f"Created agents: {', '.join(created_agents[:6])}")
+    lines.append("")
+    lines.append(
+        f"Queued {queued_work} work item(s) and processed {processed} non-CEO agent cycle(s)."
+    )
+    return "\n".join(lines).strip()
 
 
 def _ensure_agent(engine: CEOEngine, store: MemoryStore, model_name: str) -> str:
@@ -105,6 +153,86 @@ def _ensure_agent(engine: CEOEngine, store: MemoryStore, model_name: str) -> str
         metadata=metadata,
     )
     return agent_id
+
+
+def _resolve_home_guild(client: Any) -> Optional[Any]:
+    configured = os.getenv("AI_CEO_DISCORD_GUILD_ID", "").strip()
+    if configured:
+        try:
+            guild_id = int(configured)
+        except ValueError:
+            guild_id = 0
+        if guild_id:
+            return client.get_guild(guild_id)
+    return client.guilds[0] if getattr(client, "guilds", None) else None
+
+
+async def _ensure_agent_category(guild: Any) -> Optional[Any]:
+    category_name = os.getenv("AI_CEO_DISCORD_AGENT_CATEGORY", "agents")
+    existing = next(
+        (channel for channel in getattr(guild, "categories", []) if channel.name.lower() == category_name.lower()),
+        None,
+    )
+    if existing is not None:
+        return existing
+    return await guild.create_category(category_name)
+
+
+async def _ensure_agent_channel(guild: Any, category: Any, agent_id: str, agent_name: str) -> Any:
+    desired_name = _slugify_channel_name(agent_id)
+    for channel in getattr(guild, "text_channels", []):
+        if channel.name == desired_name:
+            return channel
+
+    topic = f"{agent_name} | {agent_id}"
+    return await guild.create_text_channel(desired_name, category=category, topic=topic)
+
+
+async def _publish_agent_report_to_guild(guild: Any, report: Dict[str, Any]) -> None:
+    category = await _ensure_agent_category(guild)
+    if category is None:
+        return
+    channel = await _ensure_agent_channel(
+        guild=guild,
+        category=category,
+        agent_id=str(report.get("agent_id", "agent")),
+        agent_name=str(report.get("agent_name", report.get("agent_id", "Agent"))),
+    )
+    await channel.send(_format_agent_report_for_channel(report))
+
+
+async def _ensure_created_agent_channels(guild: Any, store: MemoryStore, result: Any) -> None:
+    category = await _ensure_agent_category(guild)
+    if category is None:
+        return
+    for action in result.applied_agent_actions:
+        if action.action != "create":
+            continue
+        agent = store.get_agent(action.agent_id)
+        if agent is None:
+            continue
+        channel = await _ensure_agent_channel(guild, category, agent.agent_id, agent.name)
+        await channel.send(
+            f"Booting up **{agent.name}**.\nRole: {agent.role}\nMandate: {agent.mandate}"
+        )
+
+
+async def _run_company_loop(engine: CEOEngine, trigger: str, max_passes: int = 6) -> Dict[str, Any]:
+    result = await asyncio.to_thread(engine.run_cycle, trigger, 25)
+    all_reports = list(result.agent_reports)
+
+    for pass_index in range(max_passes - 1):
+        reports = await asyncio.to_thread(
+            engine.process_agent_queue,
+            f"{trigger} | follow-up pass {pass_index + 1}",
+            None,
+            25,
+        )
+        if not reports:
+            break
+        all_reports.extend(reports)
+
+    return {"cycle_result": result, "reports": all_reports}
 
 
 async def run_discord_bot() -> None:
@@ -184,17 +312,26 @@ async def run_discord_bot() -> None:
         )
 
         async with message.channel.typing():
-            reports = await asyncio.to_thread(
-                engine.process_agent_queue,
-                f"Discord inbound from {message.author.display_name}",
-                None,
-                1,
+            loop_result = await _run_company_loop(
+                engine=engine,
+                trigger=f"Discord inbound from {message.author.display_name}: {content}",
             )
 
+        result = loop_result["cycle_result"]
+        reports = loop_result["reports"]
         report = next((item for item in reports if item.get("agent_id") == agent_id), None)
         if report is None:
             await message.reply("I logged that, but I did not generate a reply.")
             return
+
+        guild = message.guild or _resolve_home_guild(client)
+        if guild is not None:
+            await _ensure_created_agent_channels(guild, store, result)
+            non_ceo_reports = [item for item in reports if item.get("agent_id") != agent_id]
+            for item in non_ceo_reports:
+                await _publish_agent_report_to_guild(guild, item)
+            if non_ceo_reports:
+                await message.channel.send(_format_cycle_summary(result, non_ceo_reports))
 
         reply = _render_report_reply(report)
         await message.reply(reply, mention_author=False)
