@@ -151,10 +151,11 @@ def _format_admin_dm(result: Any, non_ceo_reports: List[Dict[str, Any]]) -> str:
     return "\n".join(lines).strip()
 
 
-def _format_boot_dm(interval_seconds: int) -> str:
+def _format_boot_dm(idle_ceo_seconds: int, poll_seconds: int) -> str:
     return (
-        "Ryan CEO autonomous loop is online.\n"
-        f"Idle backoff: {interval_seconds} seconds.\n"
+        "Ryan CEO reactive loop is online.\n"
+        f"Idle strategy threshold: {idle_ceo_seconds} seconds.\n"
+        f"Idle poll: {poll_seconds} seconds.\n"
         f"Guild: {os.getenv('AI_CEO_DISCORD_GUILD_ID', '(auto)')}\n"
         f"Admin user: {os.getenv('AI_CEO_DISCORD_ADMIN_USER_ID', '(unset)')}"
     )
@@ -162,6 +163,18 @@ def _format_boot_dm(interval_seconds: int) -> str:
 
 def _autonomous_timeout_seconds() -> int:
     return max(30, int(os.getenv("AI_CEO_AUTONOMOUS_TIMEOUT_SECONDS", "180")))
+
+
+def _reactive_poll_seconds() -> int:
+    return max(1, int(os.getenv("AI_CEO_AUTONOMOUS_IDLE_POLL_SECONDS", "3")))
+
+
+def _idle_ceo_seconds() -> int:
+    raw = os.getenv(
+        "AI_CEO_AUTONOMOUS_IDLE_CEO_SECONDS",
+        os.getenv("AI_CEO_AUTONOMOUS_INTERVAL_SECONDS", "300"),
+    )
+    return max(15, int(raw))
 
 
 def _cycle_has_momentum(loop_result: Dict[str, Any]) -> bool:
@@ -178,6 +191,25 @@ def _cycle_has_momentum(loop_result: Dict[str, Any]) -> bool:
     if reports:
         return True
     return False
+
+
+def _snapshot_signature(store: MemoryStore) -> tuple:
+    overview = store.system_overview()
+    recent_cycle = store.recent_cycles(limit=1)
+    recent_decision = store.recent_decisions(limit=1)
+    recent_message = store.recent_messages(limit=1)
+    recent_work = store.recent_work_items(limit=1)
+    runnable = store.list_runnable_agents(limit=10)
+    return (
+        overview["queued_work_items"],
+        overview["queued_messages"],
+        tuple(agent.agent_id for agent in runnable),
+        recent_cycle[0]["cycle_id"] if recent_cycle else "",
+        recent_decision[0]["decision_id"] if recent_decision else "",
+        recent_message[0]["message_id"] if recent_message else "",
+        recent_work[0]["work_item_id"] if recent_work else "",
+        recent_work[0]["updated_at"] if recent_work else "",
+    )
 
 
 def _autonomous_trigger() -> str:
@@ -320,6 +352,10 @@ async def _run_company_loop(engine: CEOEngine, trigger: str, max_passes: int = 6
     return {"cycle_result": result, "reports": all_reports}
 
 
+async def _run_queue_reaction(engine: CEOEngine, trigger: str) -> List[Dict[str, Any]]:
+    return await asyncio.to_thread(engine.process_agent_queue, trigger, None, 25)
+
+
 async def _publish_company_loop(
     *,
     client: Any,
@@ -344,6 +380,35 @@ async def _publish_company_loop(
     await _send_admin_dm(client, _format_admin_dm(result, non_ceo_reports))
 
 
+def _format_execution_dm(reports: List[Dict[str, Any]]) -> str:
+    lines = ["Ryan execution update"]
+    for report in reports[:5]:
+        lines.append(
+            f"- {report.get('agent_name', report.get('agent_id', 'Agent'))}: {report.get('summary', '')}"
+        )
+    return "\n".join(lines).strip()
+
+
+async def _publish_queue_reports(
+    *,
+    client: Any,
+    reports: List[Dict[str, Any]],
+) -> None:
+    if not reports:
+        return
+
+    guild = _resolve_home_guild(client)
+    if guild is not None:
+        for item in reports:
+            await _publish_agent_report_to_guild(guild, item)
+
+    await _send_admin_dm(
+        client,
+        _format_execution_dm(reports),
+        dedupe_key=f"execution:{'|'.join(str(item.get('agent_id', '')) for item in reports[:5])}:{len(reports)}",
+    )
+
+
 async def _resolve_admin_user(client: Any) -> Optional[Any]:
     raw = os.getenv("AI_CEO_DISCORD_ADMIN_USER_ID", "").strip()
     if not raw:
@@ -363,8 +428,10 @@ async def _resolve_admin_user(client: Any) -> Optional[Any]:
         return None
 
 
-async def _send_admin_dm(client: Any, content: str) -> None:
+async def _send_admin_dm(client: Any, content: str, dedupe_key: str = "") -> None:
     if not content.strip():
+        return
+    if dedupe_key and getattr(client, "last_admin_dm_key", "") == dedupe_key:
         return
     admin_user = await _resolve_admin_user(client)
     if admin_user is None:
@@ -372,12 +439,17 @@ async def _send_admin_dm(client: Any, content: str) -> None:
     try:
         channel = admin_user.dm_channel or await admin_user.create_dm()
         await channel.send(content[:1900])
+        if dedupe_key:
+            client.last_admin_dm_key = dedupe_key
+        else:
+            client.last_admin_dm_key = ""
     except Exception as exc:
         print(f"Failed to DM Discord admin: {exc}")
 
 
 async def _autonomous_ceo_loop(client: Any, engine: CEOEngine, store: MemoryStore, agent_id: str) -> None:
-    interval_seconds = max(15, int(os.getenv("AI_CEO_AUTONOMOUS_INTERVAL_SECONDS", "300")))
+    idle_ceo_seconds = _idle_ceo_seconds()
+    poll_seconds = _reactive_poll_seconds()
     timeout_seconds = _autonomous_timeout_seconds()
     run_immediately = _env_flag("AI_CEO_AUTONOMOUS_RUN_ON_BOOT", default=True)
     momentum_sleep_seconds = max(
@@ -388,13 +460,18 @@ async def _autonomous_ceo_loop(client: Any, engine: CEOEngine, store: MemoryStor
     )
     cycle_lock: asyncio.Lock = client.autonomous_cycle_lock
     continuous_cycles = 0
+    loop = asyncio.get_running_loop()
+    last_ceo_cycle_at = 0.0
+    last_signature = _snapshot_signature(store)
+    force_ceo_cycle = run_immediately
 
     print(
-        "Autonomous CEO loop configured:",
+        "Reactive CEO loop configured:",
         {
             "enabled": True,
             "run_immediately": run_immediately,
-            "idle_backoff_seconds": interval_seconds,
+            "idle_ceo_seconds": idle_ceo_seconds,
+            "poll_seconds": poll_seconds,
             "momentum_sleep_seconds": momentum_sleep_seconds,
             "max_continuous_cycles": max_continuous_cycles,
             "timeout_seconds": timeout_seconds,
@@ -402,68 +479,117 @@ async def _autonomous_ceo_loop(client: Any, engine: CEOEngine, store: MemoryStor
             "admin_user_id": os.getenv("AI_CEO_DISCORD_ADMIN_USER_ID", ""),
         },
     )
-    await _send_admin_dm(client, _format_boot_dm(interval_seconds))
-
-    if not run_immediately:
-        await asyncio.sleep(interval_seconds)
+    await _send_admin_dm(client, _format_boot_dm(idle_ceo_seconds, poll_seconds), dedupe_key="boot")
 
     while not client.is_closed():
+        next_sleep_seconds = poll_seconds
+        phase = "idle"
         try:
+            signature = _snapshot_signature(store)
+            state_changed = signature != last_signature
+            last_signature = signature
             async with cycle_lock:
-                print("Autonomous CEO cycle starting")
-                loop_result = await asyncio.wait_for(
-                    _run_company_loop(
-                        engine=engine,
-                        trigger=_autonomous_trigger(),
-                    ),
-                    timeout=timeout_seconds,
-                )
-                result = loop_result["cycle_result"]
-                reports = loop_result["reports"]
-                print(
-                    "Autonomous CEO cycle completed",
-                    {
-                        "cycle_id": result.cycle_id,
-                        "created_agents": [
-                            action.agent_id
-                            for action in result.applied_agent_actions
-                            if action.action == "create"
-                        ],
-                        "recorded_decisions": len(result.recorded_decisions),
-                        "queued_work_items": len(result.queued_work_items),
-                        "reports": len(reports),
-                    },
-                )
-                await _publish_company_loop(
-                    client=client,
-                    store=store,
-                    agent_id=agent_id,
-                    loop_result=loop_result,
-                )
-                if _cycle_has_momentum(loop_result) and continuous_cycles < max_continuous_cycles:
-                    continuous_cycles += 1
-                    print(
-                        f"Autonomous CEO loop continuing immediately (cycle streak {continuous_cycles})"
+                handled_cycle = False
+                has_runnable_work = bool(store.list_runnable_agents(limit=1))
+                if has_runnable_work:
+                    phase = "queue"
+                    print("Reactive queue pass starting")
+                    reports = await asyncio.wait_for(
+                        _run_queue_reaction(
+                            engine=engine,
+                            trigger="Reactive queue processing",
+                        ),
+                        timeout=timeout_seconds,
                     )
-                    await asyncio.sleep(momentum_sleep_seconds)
-                    continue
-                continuous_cycles = 0
+                    if reports:
+                        print("Reactive queue pass completed", {"reports": len(reports)})
+                        await _publish_queue_reports(client=client, reports=reports)
+                        last_signature = _snapshot_signature(store)
+                        next_sleep_seconds = momentum_sleep_seconds
+                        handled_cycle = True
+
+                should_run_ceo = (
+                    not handled_cycle
+                    and (
+                        force_ceo_cycle
+                        or (state_changed and not has_runnable_work)
+                        or ((loop.time() - last_ceo_cycle_at) >= idle_ceo_seconds and not has_runnable_work)
+                    )
+                )
+
+                if not should_run_ceo and not handled_cycle:
+                    print(f"Reactive CEO loop idle; polling again in {poll_seconds} seconds")
+                    next_sleep_seconds = poll_seconds
+                    handled_cycle = True
+
+                if should_run_ceo:
+                    phase = "ceo_cycle"
+                    print("Reactive CEO cycle starting")
+                    loop_result = await asyncio.wait_for(
+                        _run_company_loop(
+                            engine=engine,
+                            trigger=_autonomous_trigger(),
+                        ),
+                        timeout=timeout_seconds,
+                    )
+                    result = loop_result["cycle_result"]
+                    reports = loop_result["reports"]
+                    print(
+                        "Autonomous CEO cycle completed",
+                        {
+                            "cycle_id": result.cycle_id,
+                            "created_agents": [
+                                action.agent_id
+                                for action in result.applied_agent_actions
+                                if action.action == "create"
+                            ],
+                            "recorded_decisions": len(result.recorded_decisions),
+                            "queued_work_items": len(result.queued_work_items),
+                            "reports": len(reports),
+                        },
+                    )
+                    await _publish_company_loop(
+                        client=client,
+                        store=store,
+                        agent_id=agent_id,
+                        loop_result=loop_result,
+                    )
+                    last_ceo_cycle_at = loop.time()
+                    force_ceo_cycle = False
+                    last_signature = _snapshot_signature(store)
+                    if _cycle_has_momentum(loop_result) and continuous_cycles < max_continuous_cycles:
+                        continuous_cycles += 1
+                        print(f"Reactive CEO loop continuing immediately (cycle streak {continuous_cycles})")
+                        next_sleep_seconds = momentum_sleep_seconds
+                    else:
+                        continuous_cycles = 0
+                        next_sleep_seconds = poll_seconds
         except asyncio.TimeoutError:
             message = (
-                f"Ryan CEO cycle timed out after {timeout_seconds} seconds.\n"
+                f"Ryan {phase.replace('_', ' ')} timed out after {timeout_seconds} seconds.\n"
                 f"Model: {os.getenv('AI_CEO_DISCORD_MODEL') or os.getenv('AI_CEO_MODEL', '(unset)')}\n"
                 "Recommendation: use a faster model for the autonomous loop."
             )
             print(message)
-            await _send_admin_dm(client, message)
+            await _send_admin_dm(
+                client,
+                message,
+                dedupe_key=f"timeout:{phase}:{timeout_seconds}:{os.getenv('AI_CEO_DISCORD_MODEL') or os.getenv('AI_CEO_MODEL', '(unset)')}",
+            )
             continuous_cycles = 0
+            next_sleep_seconds = poll_seconds
         except Exception as exc:
             print(f"Autonomous CEO loop failed: {exc}")
             print(traceback.format_exc())
-            await _send_admin_dm(client, f"Ryan CEO loop hit an error:\n{exc}")
+            await _send_admin_dm(
+                client,
+                f"Ryan CEO loop hit an error:\n{exc}",
+                dedupe_key=f"error:{type(exc).__name__}:{str(exc)}",
+            )
             continuous_cycles = 0
-        print(f"Autonomous CEO loop idle; sleeping for {interval_seconds} seconds")
-        await asyncio.sleep(interval_seconds)
+            next_sleep_seconds = poll_seconds
+        print(f"Reactive CEO loop sleeping for {next_sleep_seconds} seconds")
+        await asyncio.sleep(next_sleep_seconds)
 
 
 async def run_discord_bot() -> None:
@@ -502,6 +628,7 @@ async def run_discord_bot() -> None:
     client = discord.Client(intents=intents)
     client.autonomous_cycle_lock = asyncio.Lock()
     client.autonomous_task = None
+    client.last_admin_dm_key = ""
 
     @client.event
     async def on_ready() -> None:
