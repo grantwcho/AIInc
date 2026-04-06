@@ -149,8 +149,10 @@ AI_CEO_DISCORD_AGENT_ID=ryan_whitaker
 AI_CEO_DISCORD_AGENT_NAME=Ryan Whitaker
 AI_CEO_DISCORD_AGENT_ROLE=CEO
 AI_CEO_DISCORD_AGENT_MANDATE=Lead AI Inc, make high-leverage decisions, and coordinate the company through Discord.
-AI_CEO_DISCORD_SYSTEM_PROMPT=You are Ryan Whitaker, the CEO of AI Inc. Speak like a sharp founder-operator. Be concise, decisive, strategic, and highly agentic.
+AI_CEO_DISCORD_SYSTEM_PROMPT_FILE=prompts/ryan_whitaker.txt
 ```
+
+Store the persona prompt in a versioned file such as [prompts/ryan_whitaker.txt](/Users/grantcho/Documents/AIInc/prompts/ryan_whitaker.txt). On startup, the Discord runtime loads that file and refreshes the saved agent prompt automatically.
 
 2. Initialize the company once if you have not already:
 

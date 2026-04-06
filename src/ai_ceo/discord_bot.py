@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import os
-from typing import Optional
 
 from .brain import resolve_brain
 from .engine import CEOEngine
 from .store import MemoryStore
-from .utils import load_env_file
+from .utils import load_env_file, load_text_file
 
 
 DEFAULT_PERSONA_PROMPT = (
@@ -17,6 +16,20 @@ DEFAULT_PERSONA_PROMPT = (
     "reply in first person, sound natural, make decisions when appropriate, delegate clearly, "
     "and keep the company objective in view."
 )
+
+
+def _resolve_prompt_path() -> str:
+    return os.getenv(
+        "AI_CEO_DISCORD_SYSTEM_PROMPT_FILE",
+        os.path.join("prompts", "ryan_whitaker.txt"),
+    )
+
+
+def _load_persona_prompt() -> str:
+    prompt_path = _resolve_prompt_path()
+    if os.path.exists(prompt_path):
+        return load_text_file(prompt_path)
+    return os.getenv("AI_CEO_DISCORD_SYSTEM_PROMPT", DEFAULT_PERSONA_PROMPT)
 
 
 def _clean_discord_content(message: object, client_user_id: int) -> str:
@@ -57,17 +70,28 @@ def _render_report_reply(report: dict) -> str:
 
 def _ensure_agent(engine: CEOEngine, store: MemoryStore, model_name: str) -> str:
     agent_id = os.getenv("AI_CEO_DISCORD_AGENT_ID", "ryan_whitaker")
-    existing = store.get_agent(agent_id)
-    if existing is not None:
-        return agent_id
-
     name = os.getenv("AI_CEO_DISCORD_AGENT_NAME", "Ryan Whitaker")
     role = os.getenv("AI_CEO_DISCORD_AGENT_ROLE", "CEO")
     mandate = os.getenv(
         "AI_CEO_DISCORD_AGENT_MANDATE",
         "Lead AI Inc, make high-leverage decisions, and coordinate the company through Discord.",
     )
-    system_prompt = os.getenv("AI_CEO_DISCORD_SYSTEM_PROMPT", DEFAULT_PERSONA_PROMPT)
+    system_prompt = _load_persona_prompt()
+    metadata = {
+        "surface": "discord",
+        "prompt_file": _resolve_prompt_path(),
+    }
+
+    existing = store.get_agent(agent_id)
+    if existing is not None:
+        existing.name = name
+        existing.role = role
+        existing.mandate = mandate
+        existing.system_prompt = system_prompt
+        existing.model = model_name or existing.model
+        existing.metadata = {**existing.metadata, **metadata}
+        store.upsert_agent(existing)
+        return agent_id
 
     engine.create_agent(
         agent_id=agent_id,
@@ -78,7 +102,7 @@ def _ensure_agent(engine: CEOEngine, store: MemoryStore, model_name: str) -> str
         creator_type="human",
         creator_id="discord_setup",
         model=model_name,
-        metadata={"surface": "discord"},
+        metadata=metadata,
     )
     return agent_id
 

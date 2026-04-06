@@ -26,6 +26,10 @@ def compact_json(data: Dict[str, Any]) -> str:
     return json.dumps(data, indent=2, sort_keys=True)
 
 
+def load_text_file(path: str) -> str:
+    return Path(path).read_text(encoding="utf-8").strip()
+
+
 def load_env_file(path: str = ".env.local", override: bool = False) -> Dict[str, str]:
     env_path = Path(path)
     loaded: Dict[str, str] = {}

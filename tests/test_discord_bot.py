@@ -1,10 +1,12 @@
+import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from ai_ceo.discord_bot import _clean_discord_content, _render_report_reply
+from ai_ceo.discord_bot import _clean_discord_content, _load_persona_prompt, _render_report_reply
 
 
 class DiscordBotTests(unittest.TestCase):
@@ -35,6 +37,21 @@ class DiscordBotTests(unittest.TestCase):
             rendered,
             "Hey Grant, yes, I'm here. What's the most important thing you want me focused on?",
         )
+
+    def test_load_persona_prompt_prefers_prompt_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            prompt_path = Path(temp_dir) / "ryan.txt"
+            prompt_path.write_text("You are Ryan.", encoding="utf-8")
+
+            original = os.environ.get("AI_CEO_DISCORD_SYSTEM_PROMPT_FILE")
+            os.environ["AI_CEO_DISCORD_SYSTEM_PROMPT_FILE"] = str(prompt_path)
+            try:
+                self.assertEqual(_load_persona_prompt(), "You are Ryan.")
+            finally:
+                if original is None:
+                    os.environ.pop("AI_CEO_DISCORD_SYSTEM_PROMPT_FILE", None)
+                else:
+                    os.environ["AI_CEO_DISCORD_SYSTEM_PROMPT_FILE"] = original
 
 
 if __name__ == "__main__":
