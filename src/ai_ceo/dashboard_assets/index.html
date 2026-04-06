@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI CEO Swarm Dashboard</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="page-glow page-glow-a"></div>
+    <div class="page-glow page-glow-b"></div>
+
+    <main class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">AI Native Company Console</p>
+          <h1>Swarm Dashboard</h1>
+          <p class="hero-copy">
+            Watch agents coordinate through work queues and live message traffic.
+          </p>
+        </div>
+        <div class="hero-actions">
+          <button class="action primary" id="seed-demo">Seed Demo Swarm</button>
+          <button class="action secondary" id="refresh-state">Refresh</button>
+        </div>
+      </header>
+
+      <section class="metrics" id="metrics"></section>
+
+      <section class="layout">
+        <aside class="panel roster-panel">
+          <div class="panel-header">
+            <div>
+              <p class="panel-kicker">Registry</p>
+              <h2>Agent Roster</h2>
+            </div>
+            <span class="pill" id="agent-count">0 agents</span>
+          </div>
+          <div class="agent-list" id="agent-list"></div>
+        </aside>
+
+        <section class="panel conversation-panel">
+          <div class="panel-header">
+            <div>
+              <p class="panel-kicker">Traffic</p>
+              <h2>Conversation Feed</h2>
+            </div>
+            <span class="pill" id="message-count">0 messages</span>
+          </div>
+          <div class="feed" id="message-feed"></div>
+        </section>
+
+        <aside class="panel controls-panel">
+          <div class="panel-header">
+            <div>
+              <p class="panel-kicker">Controls</p>
+              <h2>Control Deck</h2>
+            </div>
+            <span class="pill live-pill">Live</span>
+          </div>
+
+          <form class="stack-form" id="cycle-form">
+            <label>
+              <span>Run CEO Cycle</span>
+              <textarea
+                name="input"
+                rows="4"
+                placeholder="Find the next wedge, hire a new specialist, or shift strategy."
+              ></textarea>
+            </label>
+            <button class="action primary" type="submit">Run Cycle</button>
+          </form>
+
+          <form class="stack-form" id="process-form">
+            <label>
+              <span>Process Runnable Agents</span>
+              <input
+                type="text"
+                name="trigger"
+                placeholder="Optional context for the next queue step"
+              />
+            </label>
+            <button class="action secondary" type="submit">Process Queue</button>
+          </form>
+
+          <form class="stack-form" id="message-form">
+            <label>
+              <span>Message an Agent</span>
+              <select name="recipient_agent_id" id="message-agent-select"></select>
+            </label>
+            <label>
+              <span>Subject</span>
+              <input type="text" name="subject" placeholder="Priority shift" />
+            </label>
+            <label>
+              <span>Body</span>
+              <textarea
+                name="body"
+                rows="4"
+                placeholder="Tell an agent what matters right now."
+              ></textarea>
+            </label>
+            <button class="action tertiary" type="submit">Send Message</button>
+          </form>
+        </aside>
+      </section>
+
+      <section class="lower-layout">
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <p class="panel-kicker">Queues</p>
+              <h2>Recent Work</h2>
+            </div>
+          </div>
+          <div class="work-list" id="work-list"></div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-header">
+            <div>
+              <p class="panel-kicker">Strategy</p>
+              <h2>Recent Decisions</h2>
+            </div>
+          </div>
+          <div class="decision-list" id="decision-list"></div>
+        </section>
+      </section>
+
+      <footer class="status-bar">
+        <div id="objective-line">No objective loaded yet.</div>
+        <div id="status-line">Waiting for state...</div>
+      </footer>
+    </main>
+
+    <script src="/app.js" defer></script>
+  </body>
+</html>
