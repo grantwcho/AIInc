@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import os
 import re
+import traceback
 from typing import Any, Dict, List, Optional
 
 from .brain import resolve_brain
@@ -148,6 +149,15 @@ def _format_admin_dm(result: Any, non_ceo_reports: List[Dict[str, Any]]) -> str:
                 f"- {report.get('agent_name', report.get('agent_id', 'Agent'))}: {report.get('summary', '')}"
             )
     return "\n".join(lines).strip()
+
+
+def _format_boot_dm(interval_seconds: int) -> str:
+    return (
+        "Ryan CEO autonomous loop is online.\n"
+        f"Interval: {interval_seconds} seconds.\n"
+        f"Guild: {os.getenv('AI_CEO_DISCORD_GUILD_ID', '(auto)')}\n"
+        f"Admin user: {os.getenv('AI_CEO_DISCORD_ADMIN_USER_ID', '(unset)')}"
+    )
 
 
 def _autonomous_trigger() -> str:
@@ -351,15 +361,44 @@ async def _autonomous_ceo_loop(client: Any, engine: CEOEngine, store: MemoryStor
     run_immediately = _env_flag("AI_CEO_AUTONOMOUS_RUN_ON_BOOT", default=True)
     cycle_lock: asyncio.Lock = client.autonomous_cycle_lock
 
+    print(
+        "Autonomous CEO loop configured:",
+        {
+            "enabled": True,
+            "run_immediately": run_immediately,
+            "interval_seconds": interval_seconds,
+            "guild_id": os.getenv("AI_CEO_DISCORD_GUILD_ID", ""),
+            "admin_user_id": os.getenv("AI_CEO_DISCORD_ADMIN_USER_ID", ""),
+        },
+    )
+    await _send_admin_dm(client, _format_boot_dm(interval_seconds))
+
     if not run_immediately:
         await asyncio.sleep(interval_seconds)
 
     while not client.is_closed():
         try:
             async with cycle_lock:
+                print("Autonomous CEO cycle starting")
                 loop_result = await _run_company_loop(
                     engine=engine,
                     trigger=_autonomous_trigger(),
+                )
+                result = loop_result["cycle_result"]
+                reports = loop_result["reports"]
+                print(
+                    "Autonomous CEO cycle completed",
+                    {
+                        "cycle_id": result.cycle_id,
+                        "created_agents": [
+                            action.agent_id
+                            for action in result.applied_agent_actions
+                            if action.action == "create"
+                        ],
+                        "recorded_decisions": len(result.recorded_decisions),
+                        "queued_work_items": len(result.queued_work_items),
+                        "reports": len(reports),
+                    },
                 )
                 await _publish_company_loop(
                     client=client,
@@ -369,6 +408,7 @@ async def _autonomous_ceo_loop(client: Any, engine: CEOEngine, store: MemoryStor
                 )
         except Exception as exc:
             print(f"Autonomous CEO loop failed: {exc}")
+            print(traceback.format_exc())
             await _send_admin_dm(client, f"Ryan CEO loop hit an error:\n{exc}")
         await asyncio.sleep(interval_seconds)
 
