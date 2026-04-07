@@ -7,9 +7,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from ai_ceo.discord_bot import (
+    _assigned_employee_slot,
+    _assign_employee_slots,
     _autonomous_trigger,
+    _ceo_discord_token,
     _cycle_has_momentum,
     _clean_discord_content,
+    _discover_employee_slots,
     _env_flag,
     _format_admin_dm,
     _format_agent_report_for_channel,
@@ -18,7 +22,8 @@ from ai_ceo.discord_bot import (
     _render_report_reply,
     _slugify_channel_name,
 )
-from ai_ceo.models import AgentAction, ObjectiveState, CycleResult
+from ai_ceo.models import AgentAction, AgentSpec, ObjectiveState, CycleResult
+from ai_ceo.store import MemoryStore
 
 
 class DiscordBotTests(unittest.TestCase):
@@ -175,6 +180,78 @@ class DiscordBotTests(unittest.TestCase):
             self_prompt="What's next?",
         )
         self.assertFalse(_cycle_has_momentum({"cycle_result": result, "reports": []}))
+
+    def test_ceo_discord_token_prefers_ceo_specific_env_var(self) -> None:
+        original_ceo = os.environ.get("CEO_DISCORD_BOT_TOKEN")
+        original_generic = os.environ.get("DISCORD_BOT_TOKEN")
+        os.environ["CEO_DISCORD_BOT_TOKEN"] = "ceo-token"
+        os.environ["DISCORD_BOT_TOKEN"] = "generic-token"
+        try:
+            self.assertEqual(_ceo_discord_token(), "ceo-token")
+        finally:
+            if original_ceo is None:
+                os.environ.pop("CEO_DISCORD_BOT_TOKEN", None)
+            else:
+                os.environ["CEO_DISCORD_BOT_TOKEN"] = original_ceo
+            if original_generic is None:
+                os.environ.pop("DISCORD_BOT_TOKEN", None)
+            else:
+                os.environ["DISCORD_BOT_TOKEN"] = original_generic
+
+    def test_discover_employee_slots_sorts_by_index(self) -> None:
+        originals = {key: os.environ.get(key) for key in [
+            "EMPLOYEE_2_DISCORD_BOT_TOKEN",
+            "EMPLOYEE_1_DISCORD_BOT_TOKEN",
+        ]}
+        os.environ["EMPLOYEE_2_DISCORD_BOT_TOKEN"] = "token-2"
+        os.environ["EMPLOYEE_1_DISCORD_BOT_TOKEN"] = "token-1"
+        try:
+            slots = _discover_employee_slots()
+            filtered = [item for item in slots if item["slot_id"] in {"employee_1", "employee_2"}]
+            self.assertEqual([item["slot_id"] for item in filtered], ["employee_1", "employee_2"])
+        finally:
+            for key, value in originals.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+    def test_assign_employee_slots_assigns_first_available_employee(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = MemoryStore(db_path=str(Path(temp_dir) / "ai_ceo.sqlite3"))
+            ceo = AgentSpec(
+                agent_id="ryan_whitaker",
+                name="Ryan Whitaker",
+                role="CEO",
+                mandate="Lead the company.",
+                system_prompt="You are the CEO.",
+            )
+            worker = AgentSpec(
+                agent_id="technical_lead",
+                name="Technical Lead",
+                role="Engineering",
+                mandate="Ship the product.",
+                system_prompt="You are the technical lead.",
+            )
+            store.upsert_agent(ceo)
+            store.upsert_agent(worker)
+
+            assigned = _assign_employee_slots(
+                store,
+                "ryan_whitaker",
+                [
+                    {
+                        "slot_id": "employee_1",
+                        "token_env": "EMPLOYEE_1_DISCORD_BOT_TOKEN",
+                        "token": "token-1",
+                        "index": "1",
+                    }
+                ],
+            )
+
+            refreshed = store.get_agent("technical_lead")
+            self.assertEqual(assigned, ["technical_lead"])
+            self.assertEqual(_assigned_employee_slot(refreshed), "employee_1")
 
 
 if __name__ == "__main__":

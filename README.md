@@ -143,18 +143,25 @@ You can attach a persistent agent to a Discord bot persona so it can think throu
 
 ```bash
 ANTHROPIC_API_KEY=your-key
-DISCORD_BOT_TOKEN=your-discord-token
-AI_CEO_MODEL=claude-opus-4-1-20250805
+CEO_DISCORD_BOT_TOKEN=your-ceo-discord-token
+EMPLOYEE_1_DISCORD_BOT_TOKEN=your-employee-1-token
+EMPLOYEE_2_DISCORD_BOT_TOKEN=your-employee-2-token
+AI_CEO_MODEL=claude-sonnet-4-6
 AI_CEO_DISCORD_AGENT_ID=ryan_whitaker
 AI_CEO_DISCORD_AGENT_NAME=Ryan Whitaker
 AI_CEO_DISCORD_AGENT_ROLE=CEO
 AI_CEO_DISCORD_AGENT_MANDATE=Lead AI Inc, make high-leverage decisions, and coordinate the company through Discord.
 AI_CEO_DISCORD_SYSTEM_PROMPT_FILE=prompts/ryan_whitaker.txt
 AI_CEO_AUTONOMOUS_ENABLED=true
-AI_CEO_AUTONOMOUS_INTERVAL_SECONDS=60
+AI_CEO_AUTONOMOUS_RUN_ON_BOOT=true
+AI_CEO_AUTONOMOUS_IDLE_POLL_SECONDS=3
+AI_CEO_AUTONOMOUS_IDLE_CEO_SECONDS=120
 AI_CEO_AUTONOMOUS_MOMENTUM_SLEEP_SECONDS=3
 AI_CEO_AUTONOMOUS_MAX_CONTINUOUS_CYCLES=25
-AI_CEO_DISCORD_UPDATES_CHANNEL=ceo-updates
+AI_CEO_AUTONOMOUS_QUEUE_BATCH_SIZE=1
+AI_CEO_AUTONOMOUS_CEO_AGENT_BATCH_SIZE=2
+AI_CEO_AUTONOMOUS_CEO_FOLLOWUP_PASSES=2
+AI_CEO_DISCORD_UPDATES_CHANNEL=ceo-thoughts
 ```
 
 Store the persona prompt in a versioned file such as [prompts/ryan_whitaker.txt](/Users/grantcho/Documents/AIInc/prompts/ryan_whitaker.txt). On startup, the Discord runtime loads that file and refreshes the saved agent prompt automatically.
@@ -178,8 +185,10 @@ Behavior:
 - on first boot, the runtime creates the configured Discord-backed agent if it does not already exist,
 - when someone DMs the bot or mentions it in a server, that message is queued into the agent's inbox,
 - the agent is processed through the normal `Brain` abstraction,
-- created agents are mirrored into Discord channels under the `agents` category, and
-- if `AI_CEO_AUTONOMOUS_ENABLED=true`, the CEO keeps looping while there is momentum, then backs off for `AI_CEO_AUTONOMOUS_INTERVAL_SECONDS` when the company goes idle.
+- created agents are auto-assigned to any available `EMPLOYEE_*_DISCORD_BOT_TOKEN` identities,
+- hired agents post into Discord as their own real bot identities when those employee bots are available,
+- agent-to-agent outbound messages are mirrored into Discord so the org can visibly bounce ideas around, and
+- if `AI_CEO_AUTONOMOUS_ENABLED=true`, the CEO keeps looping while there is momentum, then lightly polls while the company is idle.
 
 ## What "Permanent Agent Creation" Means Here
 
